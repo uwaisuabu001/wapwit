@@ -1,1 +1,48 @@
+<!DOCTYPE html>
 
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Wapwit | Istanbul Street Style</title>
+
+<!-- Backup Tailwind CDN to ensure styles load immediately -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          neutral: {
+            950: '#0a0a0a',
+            900: '#171717',
+            800: '#262626',
+          }
+        }
+      }
+    }
+  }
+</script>
+
+<style>
+  /* Prevent the "Flash of White" while the React app is mounting */
+  html, body { 
+    background-color: #0a0a0a; 
+    color: white; 
+    margin: 0;
+    padding: 0;
+    height: 100%;
+  }
+  #root {
+    min-height: 100%;
+  }
+</style>
+
+
+</head>
+<body class="bg-neutral-950">
+<div id="root"></div>
+<!-- This line points to your main JavaScript logic -->
+<script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
