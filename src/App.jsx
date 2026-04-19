@@ -119,7 +119,6 @@ const TRANSLATIONS = {
 
 // --- FIREBASE INITIALIZATION ---
 
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyB8_l47sZV-cjI7LlO3HjOpezaIeBz4Yzc",
   authDomain: "wapwit-bd382.firebaseapp.com",
@@ -134,9 +133,8 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Rule 1: CRITICAL - Sanitizing appId to prevent path segment errors (odd number required)
-const appIdRaw = typeof __app_id !== 'undefined' ? __app_id : 'wapwit-app';
-const appId = appIdRaw.replace(/\//g, '_');
+// FIX 1: Hardcoded stable appId — __app_id does not exist on Vercel
+const appId = 'wapwit-app';
 
 // --- MAIN APPLICATION ---
 
@@ -176,7 +174,7 @@ export default function App() {
     setTimeout(() => setShowComingSoon(false), 3000);
   };
 
-  // Auth Hook
+  // FIX 2: Robust auth — always falls back to anonymous, never silently fails
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -186,7 +184,12 @@ export default function App() {
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Authentication failed:", err);
+        console.error("Custom token auth failed, falling back to anonymous:", err);
+        try {
+          await signInAnonymously(auth);
+        } catch (anonErr) {
+          console.error("Anonymous auth also failed:", anonErr);
+        }
       }
     };
     initAuth();
@@ -197,7 +200,6 @@ export default function App() {
   // Real-time Feed Hook
   useEffect(() => {
     if (!user) return;
-    // Rule 1: Correct path construction for artifacts
     const postsCol = collection(db, 'artifacts', appId, 'public', 'data', 'posts');
     const q = query(postsCol);
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -213,40 +215,63 @@ export default function App() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // FIX 3: handleSubscribe — ensures auth before write, never silently fails
   const handleSubscribe = async (e) => {
     e.preventDefault();
-    if (!email || !user) return;
+    if (!email) return;
     setSubStatus('loading');
     try {
+      let currentUser = user;
+      if (!currentUser) {
+        const result = await signInAnonymously(auth);
+        currentUser = result.user;
+      }
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'subscribers'), {
         email, timestamp: serverTimestamp()
       });
       setSubStatus('success');
       setEmail('');
       setTimeout(() => setSubStatus('idle'), 3000);
-    } catch (err) { setSubStatus('error'); }
+    } catch (err) {
+      console.error("Subscribe error:", err);
+      setSubStatus('error');
+      setTimeout(() => setSubStatus('idle'), 3000);
+    }
   };
 
+  // FIX 4: handleInquiry — ensures auth before write, never silently fails
   const handleInquiry = async (e) => {
     e.preventDefault();
-    if (!user) return;
     setInquiryStatus('loading');
     const formData = new FormData(e.target);
     const data = Object.fromEntries(formData.entries());
     try {
+      let currentUser = user;
+      if (!currentUser) {
+        const result = await signInAnonymously(auth);
+        currentUser = result.user;
+      }
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'brand_inquiries'), {
         ...data, timestamp: serverTimestamp()
       });
       setInquiryStatus('success');
       e.target.reset();
       setTimeout(() => setInquiryStatus('idle'), 4000);
-    } catch (err) { setInquiryStatus('error'); }
+    } catch (err) {
+      console.error("Inquiry error:", err);
+      setInquiryStatus('error');
+      setTimeout(() => setInquiryStatus('idle'), 4000);
+    }
   };
 
   const handleAddPost = async (e) => {
     e.preventDefault();
-    if (!user) return;
     try {
+      let currentUser = user;
+      if (!currentUser) {
+        const result = await signInAnonymously(auth);
+        currentUser = result.user;
+      }
       const postToSave = { 
         ...newPost, 
         tags: String(newPost.tags).split(',').map(tag => tag.trim()), 
@@ -509,10 +534,24 @@ export default function App() {
                 <label className="text-[10px] font-black uppercase text-neutral-500 tracking-[0.3em] ml-2">{t.vision}</label>
                 <textarea name="message" rows="5" className="w-full p-6 bg-white/5 border border-white/10 rounded-2xl outline-none focus:border-white transition-colors text-lg" placeholder="..."></textarea>
               </div>
-              <button disabled={inquiryStatus === 'loading'} className="w-full bg-white text-black py-8 rounded-[2rem] font-black uppercase tracking-[0.3em] text-xs hover:bg-neutral-200 transition-all disabled:opacity-50">
+              <button 
+                type="submit"
+                disabled={inquiryStatus === 'loading'} 
+                className="w-full bg-white text-black py-8 rounded-[2rem] font-black uppercase tracking-[0.3em] text-xs hover:bg-neutral-200 transition-all disabled:opacity-50 flex items-center justify-center gap-3"
+              >
+                {inquiryStatus === 'loading' && <Loader2 size={16} className="animate-spin" />}
                 {inquiryStatus === 'loading' ? t.sending : inquiryStatus === 'success' ? t.sent : t.submitBrief}
               </button>
-              {inquiryStatus === 'success' && <p className="text-center text-yellow-400 font-black uppercase tracking-widest text-[10px] animate-pulse mt-4">Inquiry Received.</p>}
+              {inquiryStatus === 'success' && (
+                <p className="text-center text-yellow-400 font-black uppercase tracking-widest text-[10px] animate-pulse mt-4">
+                  ✓ Inquiry Received.
+                </p>
+              )}
+              {inquiryStatus === 'error' && (
+                <p className="text-center text-red-400 font-black uppercase tracking-widest text-[10px] mt-4">
+                  ✗ Something went wrong. Please try again.
+                </p>
+              )}
             </form>
           </section>
         </div>
@@ -524,11 +563,28 @@ export default function App() {
           <h2 className="text-6xl font-black uppercase mb-6 italic tracking-tighter text-white">{t.insider}</h2>
           <p className="text-neutral-500 mb-12 uppercase tracking-[0.2em] text-[10px] font-black">{t.insiderDesc}</p>
           <form onSubmit={handleSubscribe} className="relative max-w-md mx-auto group">
-            <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="EMAIL / E-POSTA" className="w-full px-10 py-6 bg-white/5 border border-white/10 rounded-full outline-none focus:border-white transition-all font-black text-xs tracking-[0.2em] text-white" />
-            <button className="absolute right-2 top-2 bottom-2 bg-white text-black px-10 rounded-full font-black text-[10px] tracking-[0.2em] uppercase active:scale-95 transition-transform">
-              {subStatus === 'loading' ? <Loader2 className="animate-spin" /> : t.join}
+            <input 
+              required 
+              type="email" 
+              value={email} 
+              onChange={(e) => setEmail(e.target.value)} 
+              placeholder="EMAIL / E-POSTA" 
+              className="w-full px-10 py-6 bg-white/5 border border-white/10 rounded-full outline-none focus:border-white transition-all font-black text-xs tracking-[0.2em] text-white" 
+            />
+            <button 
+              type="submit"
+              disabled={subStatus === 'loading'}
+              className="absolute right-2 top-2 bottom-2 bg-white text-black px-10 rounded-full font-black text-[10px] tracking-[0.2em] uppercase active:scale-95 transition-transform disabled:opacity-70 flex items-center justify-center"
+            >
+              {subStatus === 'loading' ? <Loader2 size={14} className="animate-spin" /> : t.join}
             </button>
           </form>
+          {subStatus === 'success' && (
+            <p className="mt-4 text-yellow-400 font-black uppercase tracking-widest text-[10px] animate-pulse">✓ Subscribed!</p>
+          )}
+          {subStatus === 'error' && (
+            <p className="mt-4 text-red-400 font-black uppercase tracking-widest text-[10px]">✗ Something went wrong. Try again.</p>
+          )}
           <div className="mt-32 flex flex-col items-center gap-10">
             <Instagram size={24} className="text-neutral-700 hover:text-white cursor-pointer transition-colors" />
             <span className="text-[10px] font-black uppercase tracking-[0.5em] text-neutral-800 italic">Wapwit Digital © 2024</span>
